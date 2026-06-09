@@ -17,8 +17,10 @@
     "max_number": 17,
     "consecutive_count": 2
   },
+  "game_date": "",
   "game_index": 1,
-  "max_captcha_attempts": 5,
+  "max_captcha_attempts": 2,
+  "max_retry_rounds": 50,
   "browser": {
     "headless": false,
     "window_width": 1900,

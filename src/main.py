@@ -20,6 +20,7 @@ import os
 import sys
 import io
 import json
+import time
 import logging
 import argparse
 from datetime import datetime
@@ -36,9 +37,11 @@ sys.path.insert(0, PROJECT_ROOT)
 
 from src.browser import create_driver, navigate_to, close_driver
 from src.auth import wait_for_manual_login, navigate_to_login
-from src.ticket import enter_booking
+from src.ticket import enter_booking, switch_to_seat_iframe, wait_for_queue
 from src.captcha import solve_captcha
-from src.seat import select_seats
+from src.seat import (
+    attempt_seat_selection, SEAT_SUCCESS, SEAT_PREEMPTED, SEAT_NO_SEATS, SEAT_ERROR
+)
 from src.payment import proceed_to_payment, handle_payment, notify_user
 
 # NOL 인터파크 메인 URL
@@ -118,10 +121,12 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 사용 예시:
-  python src/main.py                  기본 설정으로 실행
-  python src/main.py --team 두산      두산 경기 예매
-  python src/main.py --game 2         두 번째 경기 예매
-  python src/main.py --dry-run        설정만 검증 (브라우저 미실행)
+  python src/main.py                      기본 설정으로 실행
+  python src/main.py --team 두산          두산 경기 예매
+  python src/main.py --date 06.15         6월 15일 경기 예매
+  python src/main.py --date 2026-06-15    날짜 지정 (다양한 형식 지원)
+  python src/main.py --game 2             두 번째 경기 예매
+  python src/main.py --dry-run            설정만 검증 (브라우저 미실행)
         """,
     )
     parser.add_argument(
@@ -135,9 +140,14 @@ def parse_args():
         help="팀 이름 (예: 키움, 두산, 서울이랜드)",
     )
     parser.add_argument(
+        "--date",
+        type=str,
+        help="예매할 경기 날짜 (예: 06.15, 2026-06-15, 6/15)",
+    )
+    parser.add_argument(
         "--game",
         type=int,
-        help="예매할 경기 순번 (1부터 시작)",
+        help="예매할 경기 순번 (1부터 시작, --date와 함께 사용 불가)",
     )
     parser.add_argument(
         "--no-captcha-manual",
@@ -182,18 +192,27 @@ def main():
         # CLI 오버라이드 적용
         if args.team:
             apply_team_override(settings, args.team)
+        if args.date:
+            settings["game_date"] = args.date
         if args.game:
             settings["game_index"] = args.game
 
         team_name = settings.get("team", {}).get("name", "알 수 없음")
         game_index = settings.get("game_index", 1)
-        logger.info(f"팀: {team_name}, 경기 순번: {game_index}")
+        game_date = settings.get("game_date", "")
+        if game_date:
+            logger.info(f"팀: {team_name}, 경기 날짜: {game_date}")
+        else:
+            logger.info(f"팀: {team_name}, 경기 순번: {game_index}")
 
         # ========== Dry Run 모드 ==========
         if args.dry_run:
             logger.info("[OK] Dry Run 완료 - 모든 설정이 정상입니다.")
             logger.info(f"  팀: {team_name}")
-            logger.info(f"  경기 순번: {game_index}")
+            if game_date:
+                logger.info(f"  경기 날짜: {game_date}")
+            else:
+                logger.info(f"  경기 순번: {game_index}")
             logger.info(f"  좌석 범위: {settings.get('seat_preference', {})}")
             print("[OK] 설정 검증 완료!")
             return
@@ -220,26 +239,85 @@ def main():
             notify_user("티켓 매크로", "[FAIL] 예매 페이지 진입 실패!")
             return
 
-        # ========== 5. 캡차 처리 ==========
-        logger.info("[5/7] 캡차 처리 중...")
+        # ========== 5~6. 캡차 + 좌석 선택 (취소표 잡기 루프) ==========
         manual_fallback = not args.no_captcha_manual
         max_captcha = settings.get("max_captcha_attempts", 5)
+        max_rounds = settings.get("max_retry_rounds", 50)
 
-        if not solve_captcha(driver, max_attempts=max_captcha, manual_fallback=manual_fallback):
-            logger.error("캡차를 통과하지 못했습니다.")
-            notify_user("티켓 매크로", "[FAIL] 캡차 통과 실패!")
-            return
+        for round_num in range(1, max_rounds + 1):
+            logger.info(f"")
+            logger.info(f"{'='*50}")
+            logger.info(f"  [ROUND {round_num}/{max_rounds}] 캡차 + 좌석 선택 시도")
+            logger.info(f"{'='*50}")
 
-        # ========== 6. 좌석 선택 ==========
-        logger.info("[6/7] 좌석 선택 중...")
-        if not select_seats(driver, settings):
-            logger.error("좌석 선택에 실패했습니다.")
-            notify_user("티켓 매크로", "[FAIL] 좌석 선택 실패!")
+            # 5. 캡차 처리
+            logger.info(f"[5/7] 캡차 처리 중... (Round {round_num})")
+            if not solve_captcha(driver, max_attempts=max_captcha, manual_fallback=manual_fallback):
+                logger.error("캡차를 통과하지 못했습니다.")
+                notify_user("티켓 매크로", "[FAIL] 캡차 통과 실패!")
+                return
+
+            # 6. 좌석 선택
+            logger.info(f"[6/7] 좌석 선택 중... (Round {round_num})")
+            result = attempt_seat_selection(driver, settings)
+
+            if result == SEAT_SUCCESS:
+                # 성공! 결제로 진행
+                logger.info(f"[OK] Round {round_num}에서 좌석 확보 성공!")
+                break
+
+            elif result == SEAT_PREEMPTED:
+                # "이미 선점된 좌석" → 새로고침하고 캡차부터 다시
+                logger.warning(f"[!] Round {round_num}: 선점된 좌석! 새로고침 후 재시도...")
+                try:
+                    driver.refresh()
+                    time.sleep(1)
+                    # 대기열 + iframe 재진입
+                    if not wait_for_queue(driver, timeout=60):
+                        logger.error("새로고침 후 대기열 통과 실패")
+                        continue
+                    if not switch_to_seat_iframe(driver):
+                        logger.error("새로고침 후 iframe 진입 실패")
+                        continue
+                except Exception as refresh_err:
+                    logger.error(f"새로고침 중 오류: {refresh_err}")
+                continue  # 캕차부터 다시
+
+            elif result == SEAT_NO_SEATS:
+                # 빈 좌석 없음 → 새로고침 후 재시도
+                logger.warning(f"[!] Round {round_num}: 빈 좌석 없음! 새로고침 후 재시도...")
+                try:
+                    driver.refresh()
+                    time.sleep(1)
+                    if not wait_for_queue(driver, timeout=60):
+                        continue
+                    if not switch_to_seat_iframe(driver):
+                        continue
+                except Exception:
+                    pass
+                continue
+
+            else:
+                # 기타 오류
+                logger.error(f"[!] Round {round_num}: 좌석 선택 오류 ({result})")
+                try:
+                    driver.refresh()
+                    time.sleep(1)
+                    if not wait_for_queue(driver, timeout=60):
+                        continue
+                    if not switch_to_seat_iframe(driver):
+                        continue
+                except Exception:
+                    pass
+                continue
+        else:
+            # max_rounds 초과
+            logger.error(f"[FAIL] {max_rounds}회 시도 후 좌석 확보 실패")
+            notify_user("티켓 매크로", f"[FAIL] {max_rounds}회 시도 후 실패!")
             return
 
         # ========== 7. 결제 ==========
-        logger.info("[7/7] 결제 페이지로 이동 중...")
-        proceed_to_payment(driver)
+        logger.info("[7/7] 결제 페이지 도달!")
         handle_payment(driver)
 
         logger.info("[DONE] 매크로 실행 완료!")

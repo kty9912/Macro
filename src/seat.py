@@ -1,8 +1,12 @@
 """
 seat.py - 좌석 선택 모듈
 
-설정 기반으로 좌석을 필터링하고,
-연속된 좌석을 자동으로 찾아 선택합니다.
+취소표 잡기 플로우:
+  1. 자리가 있는 구역 탐색 및 선택
+  2. 좌석 선택 화면 진입
+  3. 빈 좌석 빠르게 선택
+  4. 예매 버튼 클릭
+  5. "이미 선점된 좌석입니다" 감지 → PREEMPTED 반환
 """
 
 import time
@@ -13,17 +17,122 @@ from selenium.webdriver.support import expected_conditions as EC
 
 logger = logging.getLogger(__name__)
 
+# 좌석 선택 결과 상수
+SEAT_SUCCESS = "success"           # 좌석 선택 성공 → 결제로 진행
+SEAT_PREEMPTED = "preempted"       # "이미 선점된 좌석" → 새로고침 필요
+SEAT_NO_SEATS = "no_seats"         # 빈 좌석 없음
+SEAT_ERROR = "error"               # 기타 오류
 
-def parse_seat_info(seat_element) -> dict | None:
+
+def select_available_zone(driver) -> bool:
     """
-    좌석 요소에서 열/번호 정보를 파싱합니다.
+    자리가 있는 구역을 찾아 선택합니다.
+    구역 목록에서 '매진'이 아닌 구역을 찾아 클릭합니다.
 
     Args:
-        seat_element: 좌석 WebElement
+        driver: WebDriver 인스턴스
 
     Returns:
-        {'row': '1', 'number': 10, 'element': WebElement} 또는 None
+        구역 선택 성공 여부
     """
+    try:
+        # 구역 목록 가져오기 (다양한 선택자 시도)
+        zone_selectors = [
+            ".seatGroupList li",
+            ".blockGroup li",
+            ".section-list li",
+            "div[class*='grade'] li",
+            "div[class*='block'] a",
+        ]
+
+        zones = []
+        for selector in zone_selectors:
+            zones = driver.find_elements(By.CSS_SELECTOR, selector)
+            if zones:
+                logger.info(f"구역 목록 발견: {len(zones)}개 (선택자: {selector})")
+                break
+
+        if not zones:
+            logger.warning("구역 목록을 찾을 수 없습니다. 구역 선택 건너뛰기.")
+            return True  # 구역 선택이 필요없는 경우도 있음
+
+        # 매진이 아닌 구역 찾기
+        for zone in zones:
+            zone_text = zone.text
+            # 매진/품절/선택불가 상태 확인
+            is_soldout = any(keyword in zone_text for keyword in ["매진", "품절", "마감", "선택불가"])
+
+            # CSS 클래스로도 확인
+            zone_class = zone.get_attribute("class") or ""
+            is_disabled = any(keyword in zone_class for keyword in ["disabled", "soldout", "sold-out", "off"])
+
+            if not is_soldout and not is_disabled:
+                try:
+                    zone.click()
+                    logger.info(f"[OK] 구역 선택: {zone_text[:30]}")
+                    time.sleep(0.5)
+                    return True
+                except Exception as click_err:
+                    logger.debug(f"구역 클릭 실패: {click_err}")
+                    # JS 클릭 시도
+                    try:
+                        driver.execute_script("arguments[0].click();", zone)
+                        logger.info(f"[OK] 구역 선택 (JS): {zone_text[:30]}")
+                        time.sleep(0.5)
+                        return True
+                    except Exception:
+                        continue
+
+        logger.warning("매진되지 않은 구역을 찾지 못했습니다.")
+        return False
+
+    except Exception as e:
+        logger.error(f"구역 선택 중 오류: {e}")
+        return True  # 오류 시 건너뛰기
+
+
+def click_seat_select_button(driver) -> bool:
+    """
+    '좌석선택' 버튼을 클릭합니다.
+
+    Args:
+        driver: WebDriver 인스턴스
+
+    Returns:
+        성공 여부
+    """
+    selectors = [
+        '//div[@class="twoBtn"]/a[2]',
+        '//a[contains(text(), "좌석선택")]',
+        '//a[contains(text(), "좌석 선택")]',
+        '//button[contains(text(), "좌석선택")]',
+    ]
+
+    for xpath in selectors:
+        try:
+            btn = driver.find_element(By.XPATH, xpath)
+            if btn.is_displayed():
+                btn.click()
+                logger.info("[OK] 좌석선택 버튼 클릭")
+                time.sleep(0.5)
+                return True
+        except Exception:
+            continue
+
+    # JS 폴백
+    try:
+        btn = driver.find_element(By.XPATH, '//div[@class="twoBtn"]/a[2]')
+        driver.execute_script("arguments[0].click();", btn)
+        logger.info("[OK] 좌석선택 버튼 클릭 (JS)")
+        time.sleep(0.5)
+        return True
+    except Exception as e:
+        logger.error(f"좌석선택 버튼 클릭 실패: {e}")
+        return False
+
+
+def parse_seat_info(seat_element) -> dict | None:
+    """좌석 요소에서 열/번호 정보를 파싱합니다."""
     try:
         title = seat_element.get_attribute("title")
         if not title or "-" not in title:
@@ -48,15 +157,7 @@ def parse_seat_info(seat_element) -> dict | None:
 
 
 def find_available_seats(driver) -> list[dict]:
-    """
-    현재 페이지에서 선택 가능한 좌석 목록을 가져옵니다.
-
-    Args:
-        driver: WebDriver 인스턴스
-
-    Returns:
-        파싱된 좌석 정보 리스트
-    """
+    """현재 페이지에서 선택 가능한 좌석 목록을 가져옵니다."""
     seat_elements = driver.find_elements(By.CSS_SELECTOR, ".stySeat")
     seats = []
 
@@ -75,26 +176,13 @@ def find_consecutive_seats(
     min_number: int = 1,
     max_number: int = 999,
 ) -> list[dict] | None:
-    """
-    설정 조건에 맞는 연속 좌석을 찾습니다.
-
-    Args:
-        seats: 좌석 정보 리스트
-        count: 필요한 연속 좌석 수
-        min_number: 최소 좌석 번호
-        max_number: 최대 좌석 번호
-
-    Returns:
-        연속 좌석 리스트 또는 None
-    """
-    # 범위 내 좌석만 필터링
+    """설정 조건에 맞는 연속 좌석을 찾습니다."""
     filtered = [
         s for s in seats
         if min_number <= s["number"] <= max_number
     ]
 
     if len(filtered) < count:
-        logger.warning(f"범위 내 좌석이 부족합니다 ({len(filtered)}/{count})")
         return None
 
     # 행별로 좌석 그룹화
@@ -105,12 +193,10 @@ def find_consecutive_seats(
             rows[row_key] = []
         rows[row_key].append(seat)
 
-    # 각 행에서 연속 좌석 찾기
+    # 각 행에서 연속 좌석 찾기 (슬라이딩 윈도우)
     for row_key, row_seats in rows.items():
-        # 좌석 번호 기준 정렬
         row_seats.sort(key=lambda s: s["number"])
 
-        # 연속 좌석 탐색 (슬라이딩 윈도우)
         for i in range(len(row_seats) - count + 1):
             consecutive = True
             group = [row_seats[i]]
@@ -129,164 +215,182 @@ def find_consecutive_seats(
                 logger.info(f"연속 좌석 발견: {seat_desc}")
                 return group
 
-    logger.warning("조건에 맞는 연속 좌석을 찾지 못했습니다.")
     return None
 
 
-def click_seats(seats: list[dict]) -> bool:
-    """
-    좌석 요소들을 클릭합니다.
-
-    Args:
-        seats: 클릭할 좌석 정보 리스트
-
-    Returns:
-        성공 여부
-    """
+def click_seats(driver, seats: list[dict]) -> bool:
+    """좌석 요소들을 클릭합니다."""
     try:
         for seat in seats:
-            seat["element"].click()
+            try:
+                seat["element"].click()
+            except Exception:
+                driver.execute_script("arguments[0].click();", seat["element"])
             logger.info(f"좌석 클릭: {seat['row']}열-{seat['number']}번")
-            time.sleep(0.2)
+            time.sleep(0.1)
         return True
     except Exception as e:
         logger.error(f"좌석 클릭 중 오류: {e}")
         return False
 
 
-def click_zone_select(driver) -> bool:
+def check_alert_text(driver, timeout: float = 2) -> str | None:
     """
-    구역 선택 후 '좌석선택' 버튼을 클릭합니다.
-
-    Args:
-        driver: WebDriver 인스턴스
+    Alert이 있으면 텍스트를 반환하고 닫습니다.
 
     Returns:
-        성공 여부
+        Alert 텍스트 또는 None
     """
     try:
-        select_btn = driver.find_element(
-            By.XPATH, '//div[@class="twoBtn"]/a[2]'
-        )
-        select_btn.click()
-        time.sleep(0.5)
-        logger.info("✅ 좌석선택 버튼 클릭 완료")
-        return True
-    except Exception as e:
-        logger.error(f"좌석선택 버튼 클릭 실패: {e}")
-        return False
-
-
-def handle_alert(driver) -> bool:
-    """
-    좌석 선택 시 발생할 수 있는 alert을 처리합니다.
-
-    Args:
-        driver: WebDriver 인스턴스
-
-    Returns:
-        alert이 있었으면 True
-    """
-    try:
-        WebDriverWait(driver, 2).until(EC.alert_is_present())
+        WebDriverWait(driver, timeout).until(EC.alert_is_present())
         alert = driver.switch_to.alert
         alert_text = alert.text
         logger.warning(f"Alert 발생: {alert_text}")
         alert.accept()
-        return True
+        return alert_text
     except Exception:
-        return False
+        return None
+
+
+def click_proceed_button(driver) -> bool:
+    """
+    좌석 선택 완료 후 '예매하기'/'다음단계' 버튼을 클릭합니다.
+
+    Returns:
+        성공 여부
+    """
+    # default content로 돌아가기 시도
+    try:
+        driver.switch_to.default_content()
+    except Exception:
+        pass
+
+    proceed_selectors = [
+        '//a[contains(text(), "좌석선택완료")]',
+        '//a[contains(text(), "다음단계")]',
+        '//a[contains(text(), "예매하기")]',
+        '//a[contains(text(), "결제")]',
+        '//button[contains(text(), "다음")]',
+        '//a[contains(@class, "btn_next")]',
+        '//div[@class="twoBtn"]/a[contains(@class, "btn")]',
+    ]
+
+    for xpath in proceed_selectors:
+        try:
+            btn = driver.find_element(By.XPATH, xpath)
+            if btn.is_displayed():
+                btn.click()
+                logger.info(f"[OK] 진행 버튼 클릭: {xpath}")
+                time.sleep(1)
+                return True
+        except Exception:
+            continue
+
+    logger.warning("진행 버튼을 찾지 못했습니다.")
+    return False
 
 
 def switch_to_seat_detail_iframe(driver) -> bool:
-    """
-    좌석 상세 선택 iframe으로 전환합니다.
-
-    Args:
-        driver: WebDriver 인스턴스
-
-    Returns:
-        전환 성공 여부
-    """
+    """좌석 상세 선택 iframe으로 전환합니다."""
     try:
         driver.switch_to.default_content()
         iframe = driver.find_element(By.ID, "ifrmSeatDetail")
         driver.switch_to.frame(iframe)
-        logger.info("✅ 좌석 상세 iframe 진입")
+        logger.info("[OK] 좌석 상세 iframe 진입")
         return True
     except Exception as e:
-        logger.error(f"좌석 상세 iframe 전환 실패: {e}")
+        logger.debug(f"좌석 상세 iframe 없음: {e}")
         return False
 
 
-def select_seats(driver, settings: dict, max_retries: int = 3) -> bool:
+def attempt_seat_selection(driver, settings: dict) -> str:
     """
-    좌석 선택 전체 과정을 수행합니다.
-
-    Args:
-        driver: WebDriver 인스턴스
-        settings: 설정 딕셔너리
-        max_retries: 최대 재시도 횟수
-
+    좌석 선택 1회 시도를 수행합니다.
+    
+    전체 흐름:
+      구역 선택 → 좌석선택 버튼 → 빈 좌석 탐색/클릭 → 예매 진행 버튼
+      
     Returns:
-        좌석 선택 성공 여부
+        SEAT_SUCCESS: 좌석 선택 성공
+        SEAT_PREEMPTED: "이미 선점된 좌석" → 재시도 필요
+        SEAT_NO_SEATS: 빈 좌석 없음
+        SEAT_ERROR: 기타 오류
     """
     seat_pref = settings.get("seat_preference", {})
     consecutive_count = seat_pref.get("consecutive_count", 2)
     min_number = seat_pref.get("min_number", 1)
     max_number = seat_pref.get("max_number", 999)
 
-    # 구역 선택 → 좌석 선택 화면 진입
-    click_zone_select(driver)
+    # 1. 구역 선택
+    select_available_zone(driver)
 
-    for retry in range(max_retries):
-        logger.info(f"좌석 선택 시도 {retry + 1}/{max_retries}")
+    # 2. 좌석선택 버튼 클릭
+    click_seat_select_button(driver)
 
-        # 좌석 상세 iframe 전환이 필요할 수 있음
-        try:
-            # ifrmSeatDetail이 있으면 전환
-            detail_iframes = driver.find_elements(By.ID, "ifrmSeatDetail")
-            if detail_iframes:
-                switch_to_seat_detail_iframe(driver)
-        except Exception:
-            pass
+    # 3. 좌석 상세 iframe 전환 (있으면)
+    switch_to_seat_detail_iframe(driver)
 
-        # 사용 가능한 좌석 탐색
-        available = find_available_seats(driver)
-        if not available:
-            logger.warning("사용 가능한 좌석이 없습니다.")
-            time.sleep(1)
-            continue
+    # 4. 빈 좌석 탐색
+    available = find_available_seats(driver)
+    if not available:
+        logger.warning("빈 좌석이 없습니다.")
+        return SEAT_NO_SEATS
 
-        # 연속 좌석 찾기
-        consecutive = find_consecutive_seats(
-            available, consecutive_count, min_number, max_number
-        )
+    # 5. 연속 좌석 찾기 (범위 내 → 전체 범위 순서)
+    consecutive = find_consecutive_seats(
+        available, consecutive_count, min_number, max_number
+    )
+    if not consecutive:
+        logger.info("선호 범위에 연속 좌석 없음, 전체 범위로 재탐색...")
+        consecutive = find_consecutive_seats(available, consecutive_count, 1, 999)
 
-        if consecutive:
-            # 연속 좌석 클릭
-            if click_seats(consecutive):
-                # Alert 처리
-                if handle_alert(driver):
-                    logger.warning("좌석 선택 후 alert 발생 - 재시도")
-                    continue
-                else:
-                    logger.info("✅ 좌석 선택 완료!")
-                    return True
+    if not consecutive:
+        # 연속 좌석이 없으면 아무 좌석이라도 선택
+        logger.info("연속 좌석 없음, 단일 좌석이라도 선택합니다.")
+        consecutive = available[:consecutive_count] if len(available) >= consecutive_count else available[:1]
+
+    if not consecutive:
+        return SEAT_NO_SEATS
+
+    # 6. 좌석 클릭
+    if not click_seats(driver, consecutive):
+        return SEAT_ERROR
+
+    time.sleep(0.3)
+
+    # 7. Alert 확인 (좌석 클릭 직후)
+    alert_text = check_alert_text(driver, timeout=1)
+    if alert_text:
+        if "선점" in alert_text or "이미" in alert_text:
+            logger.warning(f"[!] 선점된 좌석: {alert_text}")
+            return SEAT_PREEMPTED
         else:
-            # 연속 좌석이 없으면 단일 좌석이라도 선택
-            if len(available) >= consecutive_count:
-                logger.info("연속 좌석 미발견, 조건 완화하여 재탐색...")
-                # 전체 범위로 재시도
-                consecutive = find_consecutive_seats(
-                    available, consecutive_count, 1, 999
-                )
-                if consecutive and click_seats(consecutive):
-                    if not handle_alert(driver):
-                        logger.info("✅ 좌석 선택 완료! (확장 범위)")
-                        return True
+            logger.warning(f"[!] 기타 Alert: {alert_text}")
+            return SEAT_ERROR
 
-        time.sleep(1)
+    # 8. 예매 진행 버튼 클릭
+    click_proceed_button(driver)
 
-    logger.error("❌ 좌석 선택 실패")
-    return False
+    # 9. 진행 후 Alert 확인 (예매 버튼 클릭 후에도 나올 수 있음)
+    alert_text = check_alert_text(driver, timeout=2)
+    if alert_text:
+        if "선점" in alert_text or "이미" in alert_text:
+            logger.warning(f"[!] 선점된 좌석 (진행 후): {alert_text}")
+            return SEAT_PREEMPTED
+        else:
+            logger.warning(f"[!] 기타 Alert (진행 후): {alert_text}")
+            # 기타 alert은 일단 성공으로 간주
+            return SEAT_SUCCESS
+
+    logger.info("[OK] 좌석 선택 성공!")
+    return SEAT_SUCCESS
+
+
+# 하위 호환성을 위한 래퍼 (기존 main.py에서 호출)
+def select_seats(driver, settings: dict, max_retries: int = 3) -> bool:
+    """
+    좌석 선택 (단일 시도용 래퍼).
+    취소표 잡기 루프는 main.py에서 처리합니다.
+    """
+    result = attempt_seat_selection(driver, settings)
+    return result == SEAT_SUCCESS

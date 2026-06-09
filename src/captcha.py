@@ -193,19 +193,53 @@ def solve_captcha(driver, max_attempts: int = 5, manual_fallback: bool = True) -
                 time.sleep(1)
                 continue
 
+            # validationTxt 영역 클릭 (입력란 활성화에 필요)
+            try:
+                validation_elements = driver.find_elements(
+                    By.XPATH, "//div[contains(@class, 'validationTxt')]"
+                )
+                for elem in validation_elements:
+                    try:
+                        elem.click()
+                        break
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            time.sleep(0.3)
+
             # 텍스트 박스에 입력
             captcha_input = driver.find_element(By.XPATH, "//input[@id='txtCaptcha']")
-            captcha_input.clear()
-            captcha_input.send_keys(captcha_text)
+            try:
+                captcha_input.clear()
+                captcha_input.send_keys(captcha_text)
+            except Exception as type_err:
+                # send_keys 실패 시 JavaScript로 직접 값 설정
+                logger.warning(f"send_keys 실패, JS 폴백 사용: {type_err}")
+                driver.execute_script(
+                    "arguments[0].value = arguments[1]; "
+                    "arguments[0].dispatchEvent(new Event('input', {bubbles: true}));",
+                    captcha_input, captcha_text
+                )
+
+            time.sleep(0.3)
 
             # 제출 버튼 클릭
-            submit_btn = driver.find_element(By.CSS_SELECTOR, "div.capchaBtns > a")
-            submit_btn.click()
+            try:
+                submit_btn = driver.find_element(By.CSS_SELECTOR, "div.capchaBtns > a")
+                submit_btn.click()
+            except Exception as click_err:
+                # 클릭 실패 시 JavaScript로 직접 클릭
+                logger.warning(f"submit 클릭 실패, JS 폴백 사용: {click_err}")
+                submit_btn = driver.find_element(By.CSS_SELECTOR, "div.capchaBtns > a")
+                driver.execute_script("arguments[0].click();", submit_btn)
+
             time.sleep(0.5)
 
             # 결과 확인
             if _check_captcha_success(driver):
-                logger.info(f"✅ 캡차 통과! (시도 {attempt})")
+                logger.info(f"[OK] 캡차 통과! (시도 {attempt})")
                 return True
             else:
                 logger.warning(f"캡차 실패 (시도 {attempt}), 새로고침 후 재시도")
@@ -224,7 +258,7 @@ def solve_captcha(driver, max_attempts: int = 5, manual_fallback: bool = True) -
     if manual_fallback:
         return _manual_captcha_input(driver)
 
-    logger.error("❌ 캡차 자동 인식 실패")
+    logger.error("[FAIL] 캡차 자동 인식 실패")
     return False
 
 
@@ -275,13 +309,13 @@ def _manual_captcha_input(driver) -> bool:
         수동 입력 후 통과 여부
     """
     logger.info("=" * 50)
-    logger.info("⚠️  캡차 자동 인식에 실패했습니다!")
+    logger.info("[!] 캡차 자동 인식에 실패했습니다!")
     logger.info("    브라우저에서 직접 캡차를 입력해주세요.")
     logger.info("    입력 완료 후 Enter 키를 누르세요.")
     logger.info("=" * 50)
 
     print("\n" + "=" * 50)
-    print("⚠️  캡차 자동 인식 실패!")
+    print("[!] 캡차 자동 인식 실패!")
     print("    브라우저에서 직접 보안문자를 입력하고")
     print("    확인 버튼을 눌러주세요.")
     print("    완료되면 여기서 Enter를 눌러주세요.")
