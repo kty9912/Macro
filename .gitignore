@@ -1,1 +1,9 @@
 personal.txt
+config/personal.txt
+__pycache__/
+*.pyc
+.env
+*.log
+logs/
+venv/
+.venv/
