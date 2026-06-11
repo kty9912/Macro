@@ -6,13 +6,34 @@
     "team_code": "PB003"
   },
   "available_teams": {
-    "키움": { "sports_code": "07001", "team_code": "PB003" },
-    "두산": { "sports_code": "07001", "team_code": "PB004" },
-    "서울이랜드": { "sports_code": "07002", "team_code": "PS098" },
-    "천안시티FC": { "sports_code": "07002", "team_code": "PS006" },
-    "LCK": { "sports_code": "07032", "team_code": "PE015" }
+    "키움": {
+      "sports_code": "07001",
+      "team_code": "PB003"
+    },
+    "두산": {
+      "sports_code": "07001",
+      "team_code": "PB004"
+    },
+    "서울이랜드": {
+      "sports_code": "07002",
+      "team_code": "PS098"
+    },
+    "천안시티FC": {
+      "sports_code": "07002",
+      "team_code": "PS006"
+    },
+    "LCK": {
+      "sports_code": "07032",
+      "team_code": "PE015"
+    }
   },
   "seat_preference": {
+    "preferred_zones": [
+      "테이블석",
+      "다크버건디석",
+      "버건디석",
+      "1~2층"
+    ],
     "min_number": 6,
     "max_number": 17,
     "consecutive_count": 2

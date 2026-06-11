@@ -180,8 +180,13 @@ def solve_captcha(driver, max_attempts: int = 5, manual_fallback: bool = True) -
         logger.info(f"캡차 시도 {attempt}/{max_attempts}")
 
         try:
-            # 캡차 이미지 캡처
-            captcha_img = driver.find_element(By.XPATH, "//*[@id='imgCaptcha']")
+            # 캡차 이미지가 없거나 안 보이면 이미 통과한 것으로 간주
+            captcha_elements = driver.find_elements(By.XPATH, "//*[@id='imgCaptcha']")
+            if not captcha_elements or not captcha_elements[0].is_displayed():
+                logger.info("[OK] 캡차가 없거나 이미 통과되었습니다.")
+                return True
+
+            captcha_img = captcha_elements[0]
             image_bytes = captcha_img.screenshot_as_png
 
             # OCR 인식

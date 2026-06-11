@@ -30,7 +30,13 @@ def create_driver(settings: dict):
         import undetected_chromedriver as uc
 
         options = uc.ChromeOptions()
-        options.add_experimental_option("detach", True)
+        # detach 옵션은 uc에서 지원하지 않을 수 있으므로 제외하거나 일반 selenium에만 적용
+        
+        chrome_prefs = {
+            "profile.default_content_settings.popups": 1,
+            "profile.default_content_setting_values.notifications": 2,
+        }
+        options.add_experimental_option("prefs", chrome_prefs)
 
         if browser_config.get("headless", False):
             options.add_argument("--headless=new")
@@ -52,6 +58,12 @@ def create_driver(settings: dict):
 
         chrome_options = Options()
         chrome_options.add_experimental_option("detach", True)
+        
+        chrome_prefs = {
+            "profile.default_content_settings.popups": 1,
+            "profile.default_content_setting_values.notifications": 2,
+        }
+        chrome_options.add_experimental_option("prefs", chrome_prefs)
 
         if browser_config.get("headless", False):
             chrome_options.add_argument("--headless=new")

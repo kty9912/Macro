@@ -86,25 +86,50 @@ def find_game_by_date(driver, target_date: str) -> int | None:
         logger.info(f"경기 목록 {len(schedules)}개 발견")
 
         for i, schedule in enumerate(schedules, 1):
+            # 1. 텍스트에서 매칭 시도 (기존 방식)
             text = schedule.text
-            # 다양한 날짜 형식 매칭
-            # "06.15", "6.15", "06/15", "6월 15일", "06월15일" 등
             date_patterns = [
-                f"{month}.{day}",
-                f"{month.zfill(2)}.{day.zfill(2)}",
-                f"{month}/{day}",
-                f"{month.zfill(2)}/{day.zfill(2)}",
-                f"{month}월 {day}일",
-                f"{month}월{day}일",
-                f"{month.zfill(2)}월 {day.zfill(2)}일",
-                f"{month.zfill(2)}월{day.zfill(2)}일",
+                f"{month}.{day}", f"{month.zfill(2)}.{day.zfill(2)}",
+                f"{month}/{day}", f"{month.zfill(2)}/{day.zfill(2)}",
+                f"{month}월 {day}일", f"{month}월{day}일",
+                f"{month.zfill(2)}월 {day.zfill(2)}일", f"{month.zfill(2)}월{day.zfill(2)}일",
             ]
-
+            
+            matched = False
             for pattern in date_patterns:
                 if pattern in text:
-                    logger.info(f"[OK] 날짜 매칭: '{pattern}' (경기 #{i})")
-                    logger.info(f"  경기 정보: {text[:100]}...")
-                    return i
+                    matched = True
+                    break
+
+            # 2. CSS 클래스(sprite)에서 날짜 파싱 시도 (NOL 티켓 방식)
+            if not matched:
+                date_str = ""
+                try:
+                    num_elements = schedule.find_elements(By.CSS_SELECTOR, ".scheduleDate .num")
+                    for num_el in num_elements:
+                        cls = num_el.get_attribute("class") or ""
+                        if "num0" in cls: date_str += "0"
+                        elif "num1" in cls: date_str += "1"
+                        elif "num2" in cls: date_str += "2"
+                        elif "num3" in cls: date_str += "3"
+                        elif "num4" in cls: date_str += "4"
+                        elif "num5" in cls: date_str += "5"
+                        elif "num6" in cls: date_str += "6"
+                        elif "num7" in cls: date_str += "7"
+                        elif "num8" in cls: date_str += "8"
+                        elif "num9" in cls: date_str += "9"
+                        elif "dot" in cls: date_str += "."
+                    
+                    if date_str:
+                        logger.info(f"파싱된 날짜 (CSS): {date_str}")
+                        if f"{month.zfill(2)}.{day.zfill(2)}" in date_str or f"{month}.{day}" in date_str:
+                            matched = True
+                except Exception as e:
+                    logger.debug(f"CSS 날짜 파싱 중 오류: {e}")
+
+            if matched:
+                logger.info(f"[OK] 날짜 매칭 성공! (경기 #{i})")
+                return i
 
         logger.warning(f"날짜 '{target_date}'에 해당하는 경기를 찾지 못했습니다.")
         # 발견된 경기 목록 로깅
@@ -151,7 +176,11 @@ def click_booking_button(driver, game_index: int = 1, game_date: str = "") -> bo
         booking_btn = wait.until(
             EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
         )
-        booking_btn.click()
+        try:
+            booking_btn.click()
+        except Exception:
+            driver.execute_script("arguments[0].click();", booking_btn)
+            
         logger.info(f"[OK] {game_index}번째 경기 예매 버튼 클릭 완료")
         return True
 
@@ -162,7 +191,11 @@ def click_booking_button(driver, game_index: int = 1, game_date: str = "") -> bo
         try:
             buttons = driver.find_elements(By.CSS_SELECTOR, ".BtnColor_Y.btn1, .btn_book, a[class*='book']")
             if buttons and game_index <= len(buttons):
-                buttons[game_index - 1].click()
+                btn = buttons[game_index - 1]
+                try:
+                    btn.click()
+                except Exception:
+                    driver.execute_script("arguments[0].click();", btn)
                 logger.info(f"[OK] 대체 선택자로 {game_index}번째 경기 예매 버튼 클릭 성공")
                 return True
         except Exception as e2:
@@ -171,12 +204,13 @@ def click_booking_button(driver, game_index: int = 1, game_date: str = "") -> bo
         return False
 
 
-def switch_to_booking_popup(driver) -> bool:
+def switch_to_booking_popup(driver, original_window_count: int = 1) -> bool:
     """
     예매 팝업 창으로 포커스를 이동합니다.
 
     Args:
         driver: WebDriver 인스턴스
+        original_window_count: 예매 버튼 클릭 전의 창 개수
 
     Returns:
         전환 성공 여부
@@ -186,7 +220,7 @@ def switch_to_booking_popup(driver) -> bool:
 
         # 새 창이 열릴 때까지 대기
         WebDriverWait(driver, 10).until(
-            lambda d: len(d.window_handles) > 1
+            lambda d: len(d.window_handles) > original_window_count
         )
 
         # 팝업 창으로 전환 (마지막에 열린 창)
@@ -267,12 +301,15 @@ def enter_booking(driver, settings: dict) -> bool:
     # 1. 경기 페이지로 이동
     navigate_to_game(driver, settings)
 
+    # 현재 창 개수 저장
+    original_window_count = len(driver.window_handles)
+
     # 2. 예매 버튼 클릭 (날짜 지정 시 날짜 기반 탐색)
     if not click_booking_button(driver, game_index, game_date):
         return False
 
     # 3. 팝업 창 전환
-    if not switch_to_booking_popup(driver):
+    if not switch_to_booking_popup(driver, original_window_count):
         return False
 
     # 4. 대기열 통과 대기
