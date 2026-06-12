@@ -168,6 +168,8 @@ def handle_payment(driver):
 
     # 결제 페이지에서 대기 (브라우저가 닫히지 않도록)
     try:
-        input("\n결제를 완료한 후 Enter를 눌러 프로그램을 종료하세요... ")
-    except (EOFError, KeyboardInterrupt):
+        print("\n[!] 매크로를 완전히 종료하시려면 터미널 창에서 Ctrl + C 를 눌러주세요.")
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
         pass

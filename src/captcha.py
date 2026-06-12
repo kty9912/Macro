@@ -100,14 +100,16 @@ def recognize_captcha(image_bytes: bytes) -> str:
     """
     reader = _get_reader()
 
+    allowlist = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    
     # 전처리된 이미지로 OCR 수행
     preprocessed = preprocess_captcha_image(image_bytes)
-    results = reader.readtext(preprocessed, detail=0)
+    results = reader.readtext(preprocessed, detail=0, allowlist=allowlist)
 
     if not results:
         # 전처리 없이 원본으로 재시도
         logger.warning("전처리 이미지 인식 실패, 원본으로 재시도")
-        results = reader.readtext(image_bytes, detail=0)
+        results = reader.readtext(image_bytes, detail=0, allowlist=allowlist)
 
     if not results:
         logger.error("캡차 인식 완전 실패")
@@ -134,31 +136,29 @@ def _correct_captcha_text(text: str) -> str:
     Returns:
         보정된 텍스트
     """
-    # 공백 제거
-    text = text.replace(" ", "")
+    # 대문자로 변환
+    text = text.upper()
 
-    # 특수문자 제거
-    text = text.replace(".", "").replace(",", "").replace("(", "").replace(")", "")
-    text = text.replace("[", "").replace("]", "").replace("{", "").replace("}", "")
-    text = text.replace("'", "").replace('"', "").replace("-", "").replace("_", "")
-
-    # 흔한 혼동 문자 보정 (숫자-문자 혼동)
-    # 주의: 캡차가 숫자만인지 영문+숫자인지에 따라 다르게 처리해야 함
+    # 캡차는 영문 대문자 6자리 고정이므로, 잘못 인식된 숫자를 영문으로 교정
     corrections = {
-        "o": "0", "O": "0",  # o → 0
-        "s": "5", "S": "5",  # s → 5
-        "l": "1", "I": "1",  # l/I → 1
-        "z": "2", "Z": "2",  # z → 2
-        "b": "6", "B": "8",  # b → 6, B → 8
-        "g": "9",            # g → 9
+        "0": "O",
+        "1": "I",
+        "2": "Z",
+        "5": "S",
+        "6": "G",
+        "8": "B",
+        "9": "Q",
     }
+    
+    for k, v in corrections.items():
+        text = text.replace(k, v)
 
-    # 캡차가 숫자+영문 혼합인 경우가 많으므로, 보수적으로 적용
-    # 결과 문자열이 영숫자만 포함하도록 필터링
-    result = ""
-    for char in text:
-        if char.isalnum():
-            result += char
+    # 영문 대문자만 필터링
+    result = "".join(char for char in text if char.isalpha() and char.isupper())
+
+    # 정확히 6자리만 사용하도록 (더 길면 앞 6자리 자름)
+    if len(result) > 6:
+        result = result[:6]
 
     return result
 

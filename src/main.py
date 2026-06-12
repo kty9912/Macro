@@ -243,8 +243,32 @@ def main():
         manual_fallback = not args.no_captcha_manual
         max_captcha = settings.get("max_captcha_attempts", 5)
         max_rounds = settings.get("max_retry_rounds", 50)
+        total_rounds_done = 0
+        result = None
 
-        for round_num in range(1, max_rounds + 1):
+        while True:
+            total_rounds_done += 1
+            round_num = total_rounds_done
+            
+            if round_num > max_rounds:
+                logger.error(f"[FAIL] {max_rounds}회 시도 후 좌석 확보 실패")
+                notify_user("티켓 매크로", f"[FAIL] {max_rounds}회 시도 후 실패!")
+                print(f"\n[FAIL] {max_rounds}회 시도 후 좌석을 확보하지 못했습니다.")
+                
+                try:
+                    choice = input(f"\n[?] 추가로 {settings.get('max_retry_rounds', 50)}회 더 시도하시겠습니까? (Y/N): ").strip().upper()
+                except (EOFError, KeyboardInterrupt):
+                    choice = 'N'
+                    
+                if choice == 'Y':
+                    added = settings.get("max_retry_rounds", 50)
+                    max_rounds += added
+                    print(f"\n-> {added}회 추가 탐색을 이어서 시작합니다...\n")
+                    continue
+                else:
+                    print("\n[!] 탐색을 종료합니다. 매크로는 대기 상태로 전환됩니다.")
+                    break
+
             logger.info(f"")
             logger.info(f"{'='*50}")
             logger.info(f"  [ROUND {round_num}/{max_rounds}] 캡차 + 좌석 선택 시도")
@@ -310,17 +334,15 @@ def main():
                 except Exception:
                     pass
                 continue
+
+        # while 루프 종료 후 성공 여부 체크
+        if result == SEAT_SUCCESS:
+            # ========== 7. 결제 ==========
+            logger.info("[7/7] 결제 페이지 도달!")
+            handle_payment(driver)
+            logger.info("[DONE] 매크로 실행 완료!")
         else:
-            # max_rounds 초과
-            logger.error(f"[FAIL] {max_rounds}회 시도 후 좌석 확보 실패")
-            notify_user("티켓 매크로", f"[FAIL] {max_rounds}회 시도 후 실패!")
-            return
-
-        # ========== 7. 결제 ==========
-        logger.info("[7/7] 결제 페이지 도달!")
-        handle_payment(driver)
-
-        logger.info("[DONE] 매크로 실행 완료!")
+            logger.info("[DONE] 좌석 확보 없이 매크로 루프가 종료되었습니다.")
 
     except FileNotFoundError as e:
         logger.error(f"파일 오류: {e}")
@@ -342,7 +364,16 @@ def main():
     finally:
         if driver:
             # 브라우저는 닫지 않음 (detach 옵션으로 유지)
-            logger.info("프로그램 종료. 브라우저는 열린 상태로 유지됩니다.")
+            logger.info("프로그램 종료 대기 상태.")
+            print("\n" + "=" * 60)
+            print("[!] 프로그램 실행이 종료되었습니다. (브라우저 열림 상태 유지)")
+            print("[!] 이 창에서 Ctrl + C 를 한 번 더 누르거나 창을 닫으면 완전히 종료됩니다.")
+            print("=" * 60 + "\n")
+            try:
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                pass
 
 
 if __name__ == "__main__":

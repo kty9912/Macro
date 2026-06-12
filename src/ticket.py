@@ -177,9 +177,19 @@ def click_booking_button(driver, game_index: int = 1, game_date: str = "") -> bo
             EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
         )
         try:
+            # 1. 요소가 화면에 보이도록 스크롤 (가운데 정렬)
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", booking_btn)
+            time.sleep(0.3)
+            # 2. 일반 클릭 시도
             booking_btn.click()
-        except Exception:
-            driver.execute_script("arguments[0].click();", booking_btn)
+        except Exception as e1:
+            logger.debug(f"일반 클릭 실패, ActionChains 시도: {e1}")
+            try:
+                from selenium.webdriver.common.action_chains import ActionChains
+                ActionChains(driver).move_to_element(booking_btn).click().perform()
+            except Exception as e2:
+                logger.debug(f"ActionChains 실패, JS 클릭 시도: {e2}")
+                driver.execute_script("arguments[0].click();", booking_btn)
             
         logger.info(f"[OK] {game_index}번째 경기 예매 버튼 클릭 완료")
         return True
@@ -193,9 +203,15 @@ def click_booking_button(driver, game_index: int = 1, game_date: str = "") -> bo
             if buttons and game_index <= len(buttons):
                 btn = buttons[game_index - 1]
                 try:
+                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
+                    time.sleep(0.3)
                     btn.click()
                 except Exception:
-                    driver.execute_script("arguments[0].click();", btn)
+                    from selenium.webdriver.common.action_chains import ActionChains
+                    try:
+                        ActionChains(driver).move_to_element(btn).click().perform()
+                    except Exception:
+                        driver.execute_script("arguments[0].click();", btn)
                 logger.info(f"[OK] 대체 선택자로 {game_index}번째 경기 예매 버튼 클릭 성공")
                 return True
         except Exception as e2:
