@@ -42,7 +42,7 @@ from src.captcha import solve_captcha
 from src.seat import (
     attempt_seat_selection, SEAT_SUCCESS, SEAT_PREEMPTED, SEAT_NO_SEATS, SEAT_ERROR
 )
-from src.payment import proceed_to_payment, handle_payment, notify_user
+from src.payment import proceed_to_payment, handle_payment, notify_user, play_alert_sound
 
 # NOL 인터파크 메인 URL
 INTERPARK_URL = "https://tickets.interpark.com/"
@@ -253,6 +253,7 @@ def main():
             if round_num > max_rounds:
                 logger.error(f"[FAIL] {max_rounds}회 시도 후 좌석 확보 실패")
                 notify_user("티켓 매크로", f"[FAIL] {max_rounds}회 시도 후 실패!")
+                play_alert_sound()
                 print(f"\n[FAIL] {max_rounds}회 시도 후 좌석을 확보하지 못했습니다.")
                 
                 try:

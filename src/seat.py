@@ -25,7 +25,7 @@ SEAT_NO_SEATS = "no_seats"         # 빈 좌석 없음
 SEAT_ERROR = "error"               # 기타 오류
 
 
-def select_available_zone(driver, settings: dict = None) -> bool:
+def select_available_zone(driver, settings: dict, ignore_zones: set = None) -> str | None:
     """
     구역 목록에서 '매진'이 아닌 구역을 찾아 클릭합니다.
     settings에 지정된 preferred_zones가 있으면 우선적으로 선택합니다.
@@ -35,10 +35,11 @@ def select_available_zone(driver, settings: dict = None) -> bool:
         settings: 설정 딕셔너리
 
     Returns:
-        구역 선택 성공 여부
+        선택된 구역의 이름(문자열), 실패 시 None, 오류 시 "ERROR"
     """
     settings = settings or {}
     preferred_zones = settings.get("seat_preference", {}).get("preferred_zones", [])
+    ignore_zones = ignore_zones or set()
 
     try:
         # 구역/등급 목록 가져오기 (다양한 선택자 시도)
@@ -114,6 +115,11 @@ def select_available_zone(driver, settings: dict = None) -> bool:
                         if pass_idx == 0: logger.info(f"[SKIP] 매진/불가 구역: {zone_desc}")
                         continue
 
+                    # 이미 탐색하여 실패한(빈자리 없는) 구역이면 패스
+                    if zone_desc in ignore_zones:
+                        if pass_idx == 0: logger.info(f"[SKIP] 이미 탐색한 구역 (눈밭): {zone_desc}")
+                        continue
+
                     # 이미 선택된 상태(active/on/selected 등)면 패스
                     if any(k in zone_class for k in ["active", "on", "selected", "chk"]):
                         if pass_idx == 0: logger.info(f"[SKIP] 이미 선택됨: {zone_desc}")
@@ -166,7 +172,7 @@ def select_available_zone(driver, settings: dict = None) -> bool:
 
         if click_count > 0:
             driver.implicitly_wait(2)
-            return True
+            return best_desc
         else:
             logger.warning("매진되지 않은 구역/등급을 찾지 못했거나 이미 모두 선택되어 있습니다.")
             try:
@@ -181,12 +187,12 @@ def select_available_zone(driver, settings: dict = None) -> bool:
                 logger.debug(f"HTML 덤프 실패: {e}")
             
             driver.implicitly_wait(2)
-            return False
+            return None
 
     except Exception as e:
         logger.error(f"구역 선택 중 오류: {e}")
         driver.implicitly_wait(2)
-        return True  # 오류 시 건너뛰고 다음 진행(좌석선택 버튼 클릭 시도)
+        return "ERROR"
 
 
 def click_seat_select_button(driver) -> bool:
@@ -546,42 +552,69 @@ def attempt_seat_selection(driver, settings: dict) -> str:
         min_number = seat_pref.get("min_number", 1)
         max_number = seat_pref.get("max_number", 999)
 
-        # 1. 구역 선택
-        select_available_zone(driver, settings)
+        ignore_zones = set()
 
-        # 2. 좌석선택 버튼 클릭
-        click_seat_select_button(driver)
+        while True:
+            # 1. 구역 선택
+            selected_zone = select_available_zone(driver, settings, ignore_zones)
+            if selected_zone == "ERROR":
+                return SEAT_ERROR
+            elif not selected_zone:
+                if not ignore_zones:
+                    logger.warning("매진되지 않은 구역/등급을 찾지 못했거나 이미 모두 선택되어 있습니다.")
+                else:
+                    logger.warning("남아있는 모든 유효 구역을 탐색했으나 자리가 없습니다.")
+                return SEAT_NO_SEATS
 
-        # 3. 좌석 상세 iframe 전환 (있으면)
-        switch_to_seat_detail_iframe(driver)
+            # 2. 좌석선택 버튼 클릭
+            click_seat_select_button(driver)
 
-        # 4. 빈 좌석 탐색
-        available = find_available_seats(driver)
-        if not available:
-            logger.warning("빈 좌석이 없습니다.")
-            return SEAT_NO_SEATS
+            # 3. 좌석 상세 iframe 전환
+            if not switch_to_seat_detail_iframe(driver):
+                # 프레임 전환 실패 시 무시하고 다음 구역 탐색
+                ignore_zones.add(selected_zone)
+                driver.switch_to.default_content()
+                try: driver.switch_to.frame(driver.find_element(By.ID, "ifrmSeat"))
+                except: pass
+                continue
 
-        # 5. 연속 좌석 찾기 (범위 내 -> 전체 범위 순서)
-        consecutive = find_consecutive_seats(
-            available, consecutive_count, min_number, max_number
-        )
-        if not consecutive:
-            logger.info("선호 범위에 연속 좌석 없음, 전체 범위로 재탐색...")
-            consecutive = find_consecutive_seats(available, consecutive_count, 1, 999)
+            # 4. 빈 좌석 탐색
+            available = find_available_seats(driver)
+            if not available:
+                logger.info(f"[{selected_zone}] 구역에 실제 빈 좌석(눈밭)이 없어 다음 구역으로 넘어갑니다.")
+                ignore_zones.add(selected_zone)
+                driver.switch_to.default_content()
+                try: driver.switch_to.frame(driver.find_element(By.ID, "ifrmSeat"))
+                except: pass
+                continue
 
-        if not consecutive:
-            # 연속 좌석이 없으면 아무 좌석이라도 선택
-            logger.info("연속 좌석 없음, 단일 좌석이라도 선택합니다.")
-            consecutive = available[:consecutive_count] if len(available) >= consecutive_count else available[:1]
+            # 5. 연속 좌석 찾기 (범위 내 -> 전체 범위 순서)
+            consecutive = find_consecutive_seats(
+                available, consecutive_count, min_number, max_number
+            )
+            if not consecutive:
+                logger.info("선호 범위에 연속 좌석 없음, 전체 범위로 재탐색...")
+                consecutive = find_consecutive_seats(available, consecutive_count, 1, 999)
 
-        if not consecutive:
-            return SEAT_NO_SEATS
+            if not consecutive:
+                # 연속 좌석이 없으면 단일 좌석 선택 시도
+                logger.info("연속 좌석 없음, 단일 좌석이라도 선택합니다.")
+                consecutive = available[:consecutive_count] if len(available) >= consecutive_count else available[:1]
 
-        # 6. 좌석 클릭
-        if not click_seats(driver, consecutive):
-            return SEAT_ERROR
+            if not consecutive:
+                logger.info(f"[{selected_zone}] 구역에 유효한 좌석이 없어 다음 구역으로 넘어갑니다.")
+                ignore_zones.add(selected_zone)
+                driver.switch_to.default_content()
+                try: driver.switch_to.frame(driver.find_element(By.ID, "ifrmSeat"))
+                except: pass
+                continue
 
-        time.sleep(0.3)
+            # 6. 좌석 클릭
+            if not click_seats(driver, consecutive):
+                return SEAT_ERROR
+
+            time.sleep(0.3)
+            break
 
         # 7. Alert 확인 (좌석 클릭 직후)
         alert_text = check_alert_text(driver, timeout=1)
