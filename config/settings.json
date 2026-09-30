@@ -34,16 +34,6 @@
       "sports_code": "07002",
       "team_code": "PS006"
     },
-    "부천FC": {
-      "slug": "bucheon",
-      "sports_code": "07002",
-      "team_code": ""
-    },
-    "성남FC": {
-      "slug": "seongnamfc",
-      "sports_code": "07002",
-      "team_code": ""
-    },
     "LCK": {
       "slug": "lck",
       "sports_code": "07032",
@@ -52,6 +42,7 @@
   },
   "seat_preference": {
     "preferred_zones": [
+      "3루",
       "테이블석",
       "다크버건디석",
       "버건디석",

@@ -209,38 +209,50 @@ def click_booking_button(driver, game_index: int = 1, game_date: str = "", requi
 
 def switch_to_booking_popup(driver, original_window_count: int = 1, timeout: int = 15) -> bool:
     """
-    예매 팝업 창(새 창/새 탭)으로 포커스를 이동합니다.
+    예매 화면(새 창/새 탭 또는 https://tickets.interpark.com/onestop/seat)으로 전환합니다.
+    새 탭으로 열리든, 현재 창에서 이동하든 모두 감지합니다.
     """
     try:
-        logger.info("예매 팝업 창 대기 중...")
-        WebDriverWait(driver, timeout).until(
-            lambda d: len(d.window_handles) > original_window_count
-        )
+        logger.info("예매 화면(onestop/seat) 진입 대기 중...")
+        start_t = time.time()
+        while time.time() - start_t < timeout:
+            # 1. 새 창 또는 새 탭이 열린 경우 -> 최신 창으로 전환
+            if len(driver.window_handles) > original_window_count:
+                driver.switch_to.window(driver.window_handles[-1])
+                logger.info(f"✅ 새 탭/창 전환 완료 (총 {len(driver.window_handles)}개 창) -> {driver.current_url}")
+                time.sleep(0.5)
+                return True
 
-        # 새 창으로 전환 (마지막 핸들)
-        driver.switch_to.window(driver.window_handles[-1])
-        logger.info(f"✅ 팝업 창 전환 완료 (총 {len(driver.window_handles)}개 창)")
-        time.sleep(0.5)
+            # 2. 현재 창 자체가 onestop/seat 또는 tickets.interpark.com으로 이동한 경우
+            current_url = driver.current_url.lower()
+            if "onestop" in current_url or "seat" in current_url or "tickets.interpark.com" in current_url:
+                logger.info(f"✅ 원스톱 좌석 페이지 이동 감지: {driver.current_url}")
+                time.sleep(0.5)
+                return True
+
+            time.sleep(0.3)
+
+        logger.warning(f"창 전환/이동 대기 타임아웃 ({timeout}초). 현재 페이지에서 계속 진행합니다: {driver.current_url}")
         return True
 
     except Exception as e:
-        logger.error(f"팝업 창 전환 대기 실패: {e}")
-        return False
+        logger.error(f"예매 화면 전환 중 오류: {e}")
+        return True
 
 
 def wait_for_queue(driver, timeout: int = 300) -> bool:
     """
     대기열(순번)을 통과하여 좌석 화면이 나타날 때까지 기다립니다.
     """
-    logger.info("대기열 및 좌석 화면 로드 확인 중...")
+    logger.info("대기열 및 좌석 화면(onestop/seat) 로드 확인 중...")
     try:
-        # ifrmSeat iframe이나 좌석 등급 목록이 로드되면 대기열 통과
         wait = WebDriverWait(driver, timeout)
         wait.until(
-            lambda d: len(d.find_elements(By.ID, "ifrmSeat")) > 0 or
+            lambda d: "onestop" in d.current_url.lower() or
+                      "seat" in d.current_url.lower() or
+                      len(d.find_elements(By.ID, "ifrmSeat")) > 0 or
                       len(d.find_elements(By.CSS_SELECTOR, "iframe#ifrmSeat")) > 0 or
-                      len(d.find_elements(By.CSS_SELECTOR, ".gradeList, .blockList, #divSeat")) > 0 or
-                      "seat" in d.current_url.lower()
+                      len(d.find_elements(By.CSS_SELECTOR, ".gradeList, .blockList, #divSeat, [class*='seat']")) > 0
         )
         logger.info("✅ 대기열 통과 및 좌석 화면 로드 확인 완료")
         return True

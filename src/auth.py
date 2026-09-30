@@ -131,11 +131,7 @@ def _is_logged_in(driver) -> bool:
 
 def navigate_to_login(driver, base_url: str = "https://nol.yanolja.com"):
     """
-    로그인 페이지로 이동합니다.
+    로그인을 위해 홈 화면 상태를 유지하며 안내합니다.
     """
-    login_url = f"{base_url.rstrip('/')}/member/login"
-    try:
-        logger.info(f"로그인 페이지로 이동: {login_url}")
-        driver.get(login_url)
-    except Exception as e:
-        logger.error(f"로그인 페이지 이동 실패: {e}")
+    logger.info(f"홈 화면({base_url})에서 로그인을 대기합니다.")
+

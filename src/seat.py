@@ -42,8 +42,10 @@ def select_available_zone(driver, settings: dict, ignore_zones: set = None) -> s
     ignore_zones = ignore_zones or set()
 
     try:
-        # 구역/등급 목록 가져오기 (다양한 선택자 시도)
+        # 구역/등급 목록 가져오기 (다양한 선택자 시도 - 최신 SeatGradeLayer 최우선)
         zone_selectors = [
+            "li[class*='SeatGradeLayer_item']",
+            "div[class*='SeatGradeLayer_grade']",
             ".gradeList > li",
             ".blockList > li",
             "ul.seatList > li",
@@ -85,7 +87,12 @@ def select_available_zone(driver, settings: dict, ignore_zones: set = None) -> s
                     if not zone.is_displayed():
                         continue
 
-                    zone_text = zone.text if zone.text else zone.get_attribute("title")
+                    # 최신 원스톱 등급명 추출 지원
+                    name_els = zone.find_elements(By.CSS_SELECTOR, "div[class*='gradeName'], [class*='GradeName']")
+                    if name_els and name_els[0].text:
+                        zone_text = name_els[0].text
+                    else:
+                        zone_text = zone.text if zone.text else zone.get_attribute("title")
                     if not zone_text:
                         continue
                         
