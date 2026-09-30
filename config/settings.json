@@ -1,28 +1,51 @@
 {
   "sport": "baseball",
+  "base_url": "https://nol.yanolja.com",
+  "sports_base_url": "https://nol.yanolja.com/ticket/genre/sports",
   "team": {
     "name": "키움",
+    "slug": "heroes",
     "sports_code": "07001",
     "team_code": "PB003"
   },
   "available_teams": {
     "키움": {
+      "slug": "heroes",
       "sports_code": "07001",
       "team_code": "PB003"
     },
     "두산": {
+      "slug": "bears",
       "sports_code": "07001",
       "team_code": "PB004"
     },
-    "서울이랜드": {
+    "수원삼성": {
+      "slug": "bluewings",
       "sports_code": "07002",
-      "team_code": "PS098"
+      "team_code": ""
+    },
+    "강원FC": {
+      "slug": "gangwonfc",
+      "sports_code": "07002",
+      "team_code": ""
     },
     "천안시티FC": {
+      "slug": "ccfc",
       "sports_code": "07002",
       "team_code": "PS006"
     },
+    "부천FC": {
+      "slug": "bucheon",
+      "sports_code": "07002",
+      "team_code": ""
+    },
+    "성남FC": {
+      "slug": "seongnamfc",
+      "sports_code": "07002",
+      "team_code": ""
+    },
     "LCK": {
+      "slug": "lck",
       "sports_code": "07032",
       "team_code": "PE015"
     }
@@ -36,11 +59,13 @@
     ],
     "min_number": 6,
     "max_number": 17,
-    "consecutive_count": 2
+    "consecutive_count": 3
   },
   "game_date": "",
   "game_index": 1,
-  "max_captcha_attempts": 2,
+  "mode": "open",
+  "open_time": "",
+  "max_captcha_attempts": 3,
   "max_retry_rounds": 500,
   "browser": {
     "headless": false,
@@ -51,8 +76,8 @@
   "timing": {
     "page_load_wait": 2,
     "captcha_retry_wait": 1,
-    "seat_select_wait": 0.5,
-    "typing_delay_min": 0.05,
-    "typing_delay_max": 0.15
+    "seat_select_wait": 0.3,
+    "typing_delay_min": 0.03,
+    "typing_delay_max": 0.08
   }
 }
